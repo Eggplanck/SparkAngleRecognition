@@ -1,17 +1,30 @@
 import numpy as np
 import cv2
+import json
 
-
-def nothing(x):
-    pass
-
+output_file = 'output.csv'
+param_file = 'param.json'
 
 cap = cv2.VideoCapture(2)
+
+ret, frame = cap.read()
+assert ret
+
+# cap.set(cv2.CAP_PROP_SETTINGS, 1)
+# cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+cap.set(cv2.CAP_PROP_EXPOSURE, -5.0)
+# cap.set(cv2.CAP_PROP_AUTOFOCUS, 0.0)
+cap.set(cv2.CAP_PROP_FOCUS, 100)
 
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 cv2.namedWindow('frame')
+
+
+def nothing(x):
+    pass
+
 
 line_num = 8
 line_names = []
@@ -20,7 +33,45 @@ for l in range(0, line_num):
     cv2.createTrackbar(line_name, 'frame',
                        (height//line_num)*l, height, nothing)
     line_names.append(line_name)
+
+# threshold等の値はデバイスによって変わる
 cv2.createTrackbar('threshold', 'frame', 150, 255, nothing)
+
+
+def set_exposure(value):
+    re = cap.set(cv2.CAP_PROP_EXPOSURE, -10+value)
+    print(re)
+
+
+cv2.createTrackbar('exposure', 'frame', 5, 8, set_exposure)
+
+
+def set_focus(value):
+    re = cap.set(cv2.CAP_PROP_FOCUS, 100+value*5)
+    print(re)
+
+
+cv2.createTrackbar('focus', 'frame', 0, 120, set_focus)
+
+if output_file is not None:
+    with open(output_file, 'w') as f:
+        f.write('theta,residue,points')
+    file = None
+
+    def change_save_mode(value):
+        global file
+        if value == 1 and file is None:
+            file = open(output_file, 'a')
+        elif value == 0 and file is not None:
+            file.close()
+            file = None
+    cv2.createTrackbar('save mode', 'frame', 0, 1, change_save_mode)
+
+if param_file is not None:
+    with open(param_file) as f:
+        param_dict = json.load(f)
+    for key, value in param_dict.items():
+        cv2.setTrackbarPos(key, 'frame', value)
 
 while(cap.isOpened()):
     ret, frame = cap.read()
@@ -68,6 +119,14 @@ while(cap.isOpened()):
 
         # 角度を得る
         theta = np.abs(np.arctan(a))
+        if res.shape[0] == 0:
+            res = 0
+        else:
+            res = res[0] / (len(bright_pos)-2)
+
+        if output_file is not None:
+            if file is not None:
+                file.write(f'\n{theta},{res},{len(bright_pos)}')
 
         if b < 0:
             p0 = (0, int(-b/a))
@@ -91,9 +150,23 @@ while(cap.isOpened()):
         frame = cv2.circle(frame, (int(posx), int(posy)), 5, (0, 0, 255), -1)
 
     cv2.imshow('frame', frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    k = cv2.waitKey(1) & 0xFF
+    if k == ord('q'):
         break
+    elif k == ord('s'):
+        param_dict = {}
+        for h, name in zip(line_height, line_names):
+            param_dict[name] = h
+        param_dict['threshold'] = threshold
+        param_dict['exposure'] = cv2.getTrackbarPos('exposure', 'frame')
+        param_dict['focus'] = cv2.getTrackbarPos('focus', 'frame')
+        with open('param.json', 'w') as f:
+            json.dump(param_dict, f, indent=4)
 
+
+if output_file is not None:
+    if file is not None:
+        file.close()
 
 cap.release()
 cv2.destroyAllWindows()
