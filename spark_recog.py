@@ -4,10 +4,11 @@ import json
 import os
 
 output_file = 'output.csv'
-param_file = None#'param.json'
+param_file = 'param.json'
 layer_num = 8 # 層の数
 
-assert not os.path.exists(output_file), "output_file already exists"
+if output_file is not None:
+    assert not os.path.exists(output_file), "output_file already exists"
 
 cap = cv2.VideoCapture(2)
 
