@@ -3,7 +3,8 @@ import cv2
 import json
 
 output_file = 'output.csv'
-param_file = 'param.json'
+param_file = None#'param.json'
+layer_num = 8 # 層の数
 
 cap = cv2.VideoCapture(2)
 
@@ -12,50 +13,106 @@ assert ret
 
 # cap.set(cv2.CAP_PROP_SETTINGS, 1)
 # cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
-cap.set(cv2.CAP_PROP_EXPOSURE, -5.0)
+#cap.set(cv2.CAP_PROP_EXPOSURE, -5.0)
 # cap.set(cv2.CAP_PROP_AUTOFOCUS, 0.0)
-cap.set(cv2.CAP_PROP_FOCUS, 100)
+#cap.set(cv2.CAP_PROP_FOCUS, 100)
 
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-cv2.namedWindow('frame')
+cv2.namedWindow('raw_frame', cv2.WINDOW_AUTOSIZE)
 
+### 切り取る枠を設定
+frame_points = [[int(width/4),int(height/4)], [int(width*3/4),int(height/4)], [int(width*3/4),int(height*3/4)], [int(width/4),int(height*3/4)]]
+mapping_width = int(width/2)
+mapping_height = int(int(height/2))
+mapping_points = [[0,0], [mapping_width,0], [mapping_width,mapping_height], [0,mapping_height]]
+point_frame_active = True
+def set_frame_points(event, x, y, flags,param):
+    global frame_points, mapping_points, mapping_width, mapping_height, point_frame_active
+    if event == cv2.EVENT_LBUTTONDOWN and point_frame_active:
+        min_distance = 1e6
+        min_distance_index = -1
+        for i, (fp_x,fp_y) in enumerate(frame_points):
+            distance = np.sqrt((x-fp_x)**2 + (y-fp_y)**2)
+            if distance < min_distance:
+                min_distance = distance
+                min_distance_index = i
+        frame_points[min_distance_index] = [x, y]
+
+        fp_x0, fp_y0 = frame_points[0]
+        fp_x1, fp_y1 = frame_points[1]
+        mapping_width = int(np.sqrt((fp_x1-fp_x0)**2 + (fp_y1-fp_y0)**2))
+        fp_x0, fp_y0 = frame_points[0]
+        fp_x1, fp_y1 = frame_points[3]
+        mapping_height = int(np.sqrt((fp_x1-fp_x0)**2 + (fp_y1-fp_y0)**2))
+        mapping_points = [[0,0], [mapping_width,0], [mapping_width,mapping_height], [0,mapping_height]]
+        print(mapping_height, mapping_width)
+cv2.setMouseCallback('raw_frame', set_frame_points)
+
+while(cap.isOpened()):
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    raw_frame = frame.copy()
+    for i in range(4):
+        fp_x, fp_y = frame_points[i]
+        raw_frame = cv2.circle(raw_frame, (fp_x, fp_y), 5, (0, 255, 0), -1)
+        raw_frame = cv2.putText(raw_frame, str(i+1), (fp_x, fp_y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+        raw_frame = cv2.line(raw_frame, tuple(frame_points[i]), tuple(frame_points[(i+1)%4]), (0, 255, 255), 2)
+    cv2.imshow('raw_frame', raw_frame)
+    k = cv2.waitKey(1) & 0xFF
+    if k == ord('n'):
+        point_frame_active = False
+        break
+pts1 = np.float32(frame_points)
+pts2 = np.float32(mapping_points)
+M = cv2.getPerspectiveTransform(pts1,pts2)
+###
+
+
+cv2.namedWindow('controller', cv2.WINDOW_NORMAL)
+cv2.namedWindow('frame', cv2.WINDOW_AUTOSIZE)
 
 def nothing(x):
     pass
 
-
-line_num = 8
+line_num = layer_num + 1
 line_names = []
 for l in range(0, line_num):
     line_name = str(l)
-    cv2.createTrackbar(line_name, 'frame',
-                       (height//line_num)*l, height, nothing)
+    cv2.createTrackbar(line_name, 'controller',
+                       (mapping_height//line_num)*l, mapping_height, nothing)
     line_names.append(line_name)
 
 # threshold等の値はデバイスによって変わる
-cv2.createTrackbar('threshold', 'frame', 150, 255, nothing)
+cv2.createTrackbar('threshold', 'controller', 150, 255, nothing)
 
 
 def set_exposure(value):
     re = cap.set(cv2.CAP_PROP_EXPOSURE, -10+value)
     print(re)
-
-
-cv2.createTrackbar('exposure', 'frame', 5, 8, set_exposure)
+cv2.createTrackbar('exposure', 'controller', 5, 8, set_exposure)
 
 
 def set_focus(value):
     re = cap.set(cv2.CAP_PROP_FOCUS, 100+value*5)
     print(re)
-
-
-cv2.createTrackbar('focus', 'frame', 0, 120, set_focus)
+cv2.createTrackbar('focus', 'controller', 0, 120, set_focus)
 
 if output_file is not None:
+    s = 'theta,num_points'
+    for l in range(1,layer_num+1):
+        s += f',x{l}'
+    for l in range(1,layer_num+1):
+        s += f',y{l}'
+    for l in range(1,layer_num+1):
+        s += f',x_std{l}'
+    for l in range(1,layer_num+1):
+        s += f',y_err{l}'
     with open(output_file, 'w') as f:
-        f.write('theta,residue,points')
+        f.write(s)
     file = None
 
     def change_save_mode(value):
@@ -65,23 +122,32 @@ if output_file is not None:
         elif value == 0 and file is not None:
             file.close()
             file = None
-    cv2.createTrackbar('save mode', 'frame', 0, 1, change_save_mode)
+    cv2.createTrackbar('save mode', 'controller', 0, 1, change_save_mode)
 
 if param_file is not None:
     with open(param_file) as f:
         param_dict = json.load(f)
     for key, value in param_dict.items():
-        cv2.setTrackbarPos(key, 'frame', value)
+        cv2.setTrackbarPos(key, 'controller', value)
 
 while(cap.isOpened()):
     ret, frame = cap.read()
     if not ret:
         break
 
+    raw_frame = frame.copy()
+    for i in range(4):
+        fp_x, fp_y = frame_points[i]
+        raw_frame = cv2.circle(raw_frame, (fp_x, fp_y), 5, (0, 255, 0), -1)
+        raw_frame = cv2.putText(raw_frame, str(i+1), (fp_x, fp_y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+        raw_frame = cv2.line(raw_frame, tuple(frame_points[i]), tuple(frame_points[(i+1)%4]), (0, 255, 255), 2)
+    cv2.imshow('raw_frame', raw_frame)
+    frame = cv2.warpPerspective(frame, M, (mapping_width,mapping_height))
+
     # パラメータの値を取得
-    line_height = [cv2.getTrackbarPos(line_name, 'frame')
+    line_height = [cv2.getTrackbarPos(line_name, 'controller')
                    for line_name in line_names]
-    threshold = cv2.getTrackbarPos('threshold', 'frame')
+    threshold = cv2.getTrackbarPos('threshold', 'controller')
 
     # 明るい点のマスクを作成
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -91,21 +157,36 @@ while(cap.isOpened()):
 
     # 区切り線の描画
     for h, name in zip(line_height, line_names):
-        frame = cv2.line(frame, (0, h), (width, h), (255, 0, 0), 5)
+        frame = cv2.line(frame, (0, h), (mapping_width, h), (255, 0, 0), 5)
         frame = cv2.putText(
             frame, name, (0, h+10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
 
     # 各区間で明るい点の重心を計算
     bright_pos = []
-    for l in range(len(line_height)-1):
+    bright_x = []
+    bright_y = []
+    bright_x_std = []
+    bright_y_err = []
+    for l in range(layer_num):
         upper = line_height[l]
         lower = line_height[l+1]
         bright = mask[upper:lower, :]
         if bright.any() and lower-upper > 0:
-            x_pos = np.repeat(np.arange(0, width)[
+            x_pos = np.repeat(np.arange(0, mapping_width)[
                               None, :], lower-upper, axis=0)
-            bright_cm = x_pos[bright].sum()/bright.sum()
-            bright_pos.append((bright_cm, (upper+lower)/2))
+            bright_x_cm = x_pos[bright].mean()
+            bright_y_cm = (upper+lower)/2
+            bright_pos.append((bright_x_cm, bright_y_cm))
+            bright_x.append(bright_x_cm)
+            bright_x_std.append(x_pos[bright].std())
+            bright_y.append(bright_y_cm)
+            bright_y_err.append((lower-upper)/2)
+        else:
+            bright_x.append('')
+            bright_x_std.append('')
+            bright_y.append('')
+            bright_y_err.append('')
+
 
     # 明るい点が２つ以上あるときに線形回帰
     if len(bright_pos) >= 2:
@@ -126,25 +207,35 @@ while(cap.isOpened()):
 
         if output_file is not None:
             if file is not None:
-                file.write(f'\n{theta},{res},{len(bright_pos)}')
+                s = f'\n{theta},{len(bright_pos)}'
+                for l in range(layer_num):
+                    s += f',{bright_x[l]}'
+                for l in range(layer_num):
+                    s += f',{bright_y[l]}'
+                for l in range(layer_num):
+                    s += f',{bright_x_std[l]}'
+                for l in range(layer_num):
+                    s += f',{bright_y_err[l]}'
+                file.write(s)
 
         if b < 0:
             p0 = (0, int(-b/a))
-        elif width <= b:
-            p0 = (width-1, int((width-1-b)/a))
+        elif mapping_width <= b:
+            p0 = (mapping_width-1, int((mapping_width-1-b)/a))
         else:
             p0 = (int(b), 0)
 
-        x1 = a * height + b
+        x1 = a * mapping_height + b
         if x1 < 0:
             p1 = (0, int(-b/a))
-        elif width <= x1:
-            p1 = (width-1, int((width-1-b)/a))
+        elif mapping_width <= x1:
+            p1 = (mapping_width-1, int((mapping_width-1-b)/a))
         else:
-            p1 = (int(x1), height-1)
+            p1 = (int(x1), mapping_height-1)
         frame = cv2.line(frame, p0, p1, (0, 255, 255), 5)
+        display_pos = (int((p0[0] + p1[0]) / 2), int((p0[1] + p1[1]) / 2))
         frame = cv2.putText(frame, '{:.2f} degrees'.format(np.degrees(
-            theta)), (p1[0], p1[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+            theta)), display_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
 
     for posx, posy in bright_pos:
         frame = cv2.circle(frame, (int(posx), int(posy)), 5, (0, 0, 255), -1)
@@ -158,8 +249,8 @@ while(cap.isOpened()):
         for h, name in zip(line_height, line_names):
             param_dict[name] = h
         param_dict['threshold'] = threshold
-        param_dict['exposure'] = cv2.getTrackbarPos('exposure', 'frame')
-        param_dict['focus'] = cv2.getTrackbarPos('focus', 'frame')
+        param_dict['exposure'] = cv2.getTrackbarPos('exposure', 'controller')
+        param_dict['focus'] = cv2.getTrackbarPos('focus', 'controller')
         with open('param.json', 'w') as f:
             json.dump(param_dict, f, indent=4)
 
@@ -168,5 +259,6 @@ if output_file is not None:
     if file is not None:
         file.close()
 
+cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
 cap.release()
 cv2.destroyAllWindows()

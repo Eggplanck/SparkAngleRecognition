@@ -208,6 +208,8 @@ if output_file is not None:
     if file is not None:
         file.close()
 
+site1.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
+site2.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
 site1.cap.release()
 site2.cap.release()
 cv2.destroyAllWindows()
