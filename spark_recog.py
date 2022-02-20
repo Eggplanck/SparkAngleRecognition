@@ -2,21 +2,22 @@ import numpy as np
 import cv2
 import json
 import os
+import time
 
 output_file = 'output.csv'
 param_file = 'param.json'
 layer_num = 8 # 層の数
 
-if output_file is not None:
-    assert not os.path.exists(output_file), "output_file already exists"
+if output_file is not None and os.path.exists(output_file):
+    print("output_file already exists")
 
-cap = cv2.VideoCapture(2)
+cap = cv2.VideoCapture(1)
 
 ret, frame = cap.read()
 assert ret
 
 # cap.set(cv2.CAP_PROP_SETTINGS, 1)
-# cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
 #cap.set(cv2.CAP_PROP_EXPOSURE, -5.0)
 # cap.set(cv2.CAP_PROP_AUTOFOCUS, 0.0)
 #cap.set(cv2.CAP_PROP_FOCUS, 100)
@@ -105,6 +106,9 @@ def set_focus(value):
     print(re)
 cv2.createTrackbar('focus', 'controller', 0, 120, set_focus)
 
+
+count = 0
+st = 0
 if output_file is not None:
     s = 'theta,num_points'
     for l in range(1,layer_num+1):
@@ -120,9 +124,11 @@ if output_file is not None:
     file = None
 
     def change_save_mode(value):
-        global file
+        global file, count, st
         if value == 1 and file is None:
             file = open(output_file, 'a')
+            count = 0
+            st = time.time()
         elif value == 0 and file is not None:
             file.close()
             file = None
@@ -221,6 +227,8 @@ while(cap.isOpened()):
                 for l in range(layer_num):
                     s += f',{bright_y_err[l]}'
                 file.write(s)
+                count += 1
+                print(f'count:{count} num_points:{len(bright_pos)} theta:{theta} rate:{count/(time.time()-st)*60}/min')
 
         if b < 0:
             p0 = (0, int(-b/a))
